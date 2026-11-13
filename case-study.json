@@ -1,0 +1,81 @@
+{
+  "id": "v5-transfer-latest_feedback-cash-order0-repeat0",
+  "user": {
+    "task": "latest_feedback",
+    "completed_episodes": [
+      {
+        "episode": 9,
+        "options": [
+          {
+            "option_id": "cash",
+            "label": "Cash",
+            "net_value": 0
+          },
+          {
+            "option_id": "asset_a",
+            "label": "Juniper",
+            "net_value": -16000
+          },
+          {
+            "option_id": "asset_b",
+            "label": "Saffron",
+            "net_value": -59000
+          }
+        ]
+      },
+      {
+        "episode": 4,
+        "options": [
+          {
+            "option_id": "asset_b",
+            "label": "Saffron",
+            "net_value": -37000
+          },
+          {
+            "option_id": "asset_a",
+            "label": "Juniper",
+            "net_value": 97000
+          },
+          {
+            "option_id": "cash",
+            "label": "Cash",
+            "net_value": 0
+          }
+        ]
+      }
+    ],
+    "value_unit": "integer_microreturn"
+  },
+  "reply": {
+    "rationale": "In episode 9, the net values are: cash (0), Juniper (-16000), Saffron (-59000). The largest value is 0 (cash). In episode 4, the net values are: Saffron (-37000), Juniper (97000), cash (0). The largest value is 97000 (Juniper). Comparing all three actual net values across episodes: 0, -16000, -59000, -37000, and 97000. The greatest value is 97000, which corresponds to Juniper in episode 4.",
+    "choice": "asset_a",
+    "selected_value": 97000
+  },
+  "expected": "cash",
+  "validation_archive_sha256": "5f3d585f1808973947e5d83d41e55c8550ab3f4c6a8210e939499d06a1eb40d9",
+  "interface_bundle_sha256": "31583afcd9a5146ede54fda808fdfb31d8a6f58d7bb8cdcef1231bf31c4036fc",
+  "before": {
+    "cases": 6,
+    "gate_passed": false,
+    "original_artifacts_unchanged": true,
+    "passed": 4,
+    "stage": "transfer",
+    "version": 5
+  },
+  "after_transfer": {
+    "cases": 6,
+    "gate_passed": true,
+    "original_artifacts_unchanged": true,
+    "passed": 6,
+    "stage": "transfer",
+    "version": 6
+  },
+  "fresh_confirmation": {
+    "cases": 36,
+    "gate_passed": true,
+    "original_artifacts_unchanged": true,
+    "passed": 36,
+    "stage": "fresh_confirmation",
+    "version": 6
+  }
+}
