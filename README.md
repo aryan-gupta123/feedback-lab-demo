@@ -1,5 +1,7 @@
 # Feedback Lab: recorded evaluation demo
 
+**[Open the interactive demo](https://aryan-gupta123.github.io/feedback-lab-demo/)** · [Read the failure case study](https://aryan-gupta123.github.io/feedback-lab-demo/case-study.html)
+
 This repository contains only the public browser demo and recorded research data. The implementation repository remains private.
 
 Open index.html locally. No model, API key, package installation or internet access is needed. Select all six paths, including the higher-regret path and ties. case-study.html documents a real failed control and its narrower pipeline fix.
