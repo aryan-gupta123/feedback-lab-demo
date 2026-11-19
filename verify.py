@@ -1,343 +1,544 @@
 #!/usr/bin/env python3
-"""Verify bundled bytes, raw replies, causal inputs and arithmetic. Standard library only."""
+"""Offline replay audit using Python's standard library. Never invokes a model."""
 
-import csv
 import hashlib
-import io
 import json
 import math
 from pathlib import Path
-import tarfile
+import random
+import sys
 
-HERE = Path(__file__).resolve().parent
-WEIGHTS = [[0, 0], [1, 0], [0, 1]]
-IDS = ["cash", "asset_a", "asset_b"]
+CONDITIONS = ("public_only", "reliable", "noise", "inverted")
+OPTIONS = ("cash", "asset_a", "asset_b")
 
 
-def verify_interface(base):
-    """Independently rescore the three published control batches."""
-    case = json.loads((base / "case-study.json").read_text())
-    with tarfile.open(base / "evidence/interface.tar.gz") as bundle:
+def check(ok, message):
+    if not ok:
+        raise ValueError(message)
 
-        def read(name):
-            return json.loads(bundle.extractfile(name).read())
 
-        counts = {}
-        for stage in [
-            "named_choice_v5_transfer",
-            "named_choice_v6_transfer",
-            "named_choice_v6_fresh_confirmation",
-        ]:
-            events = [
-                json.loads(line)
-                for line in bundle.extractfile(stage + "/requests.jsonl")
-                .read()
-                .splitlines()
-            ]
-            requests = {
-                e["id"]: e["request"] for e in events if e["event"] == "request_started"
-            }
-            responses = {
-                e["id"]: e["response"] for e in events if e["event"] == "response"
-            }
-            scores = read(stage + "/scores.json")
-            assert len(requests) == len(responses) == len(scores)
-            passed = 0
-            for score in scores:
-                key = score["id"]
-                user = json.loads(requests[key]["messages"][1]["content"])
-                response = responses[key]
-                reply = json.loads(response["choices"][0]["message"]["content"])
-                if user["task"] == "latest_feedback":
-                    options = max(
-                        user["completed_episodes"], key=lambda e: e["episode"]
-                    )["options"]
-                elif user["task"] == "past_feedback":
-                    options = user["completed_episode"]["options"]
-                else:
-                    assert user["task"] == "current_payoff"
-                    options = user["options"]
-                best = max(options, key=lambda o: o["net_value"])
-                correct = (
-                    reply["choice"] == best["option_id"]
-                    and abs(reply["selected_value"] - best["net_value"]) <= 1e-6
-                    and bool(reply["rationale"].strip())
-                    and response["choices"][0]["finish_reason"] == "stop"
-                )
-                assert correct == score["passed"]
-                passed += correct
-                if key == case["id"]:
-                    assert user == case["user"] and reply == case["reply"]
-                    assert best["option_id"] == case["expected"] and not correct
-            summary = read(stage + "/summary.json")
-            assert summary["passed"] == passed
-            counts[stage] = passed
-        assert list(counts.values()) == [4, 6, 36]
-    assert (
-        hashlib.sha256((base / "evidence/interface.tar.gz").read_bytes()).hexdigest()
-        == case["interface_bundle_sha256"]
+def canonical(obj):
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def action(values):
+    return OPTIONS[max(range(3), key=lambda i: [0.0, *values][i])]
+
+
+def rules(user):
+    p = [user["public_signal_bp"][k] for k in OPTIONS[1:]]
+    choices = dict(public_signal=action(p), cash="cash")
+    if "completed_calibration" in user:
+        h = user["completed_calibration"]
+        x = [r[k + "_forecast_bp"] for r in h for k in OPTIONS[1:]]
+        y = [r[k + "_settled_bp"] for r in h for k in OPTIONS[1:]]
+        f = [user["current_source_forecast_bp"][k] for k in OPTIONS[1:]]
+        slope = sum(a * b for a, b in zip(x, y)) / (sum(a * a for a in x) + 150.0**2)
+        variance = max(
+            sum((b - slope * a) ** 2 for a, b in zip(x, y)) / len(x), 100.0**2
+        )
+        v = [a / 150.0**2 + slope * b / variance for a, b in zip(p, f)]
+        choices.update(naive_follow=action(f), calibrated=action(v))
+    return choices
+
+
+def close(a, b):
+    check(
+        math.isfinite(a) and math.isfinite(b) and abs(a - b) < 1e-9, "numeric mismatch"
     )
-    return sum([6, 6, 36])
 
 
-def verify(base=HERE):
-    if not __debug__:
-        raise RuntimeError("Run verification without Python -O")
-    base = Path(base)
-    for line in (base / "SHA256SUMS").read_text().splitlines():
-        expected, name = line.split("  ", 1)
-        path = (base / name).resolve()
-        if not path.is_relative_to(base.resolve()):
-            raise ValueError("checksum path escapes demo")
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected, (
-            f"Checksum mismatch: {name}"
-        )
-    data = json.loads((base / "pilot.json").read_text())
-    assert data["format_version"] == 1
-    verify_interface(base)
-    archive = base / "evidence/pilot.tar.gz"
-    assert hashlib.sha256(archive.read_bytes()).hexdigest() == data["evidence_sha256"]
-    # Read named members in memory; no extraction or executable code from the archive.
-    with tarfile.open(archive, "r:gz") as bundle:
+def quantile(v, q):
+    pos = (len(v) - 1) * q
+    i = int(pos)
+    return v[i] + (v[min(i + 1, len(v) - 1)] - v[i]) * (pos - i)
 
-        def read(name):
-            member = bundle.getmember(name)
-            if not member.isfile():
-                raise ValueError("expected regular evidence member")
-            return bundle.extractfile(member).read().decode()
 
-        prefix = "native_feedback_v1_main/"
-        manifest = json.loads(read(prefix + "manifest.json"))
-        events = [
-            json.loads(line) for line in read(prefix + "requests.jsonl").splitlines()
-        ]
-        requests = {
-            e["id"]: e["request"] for e in events if e["event"] == "request_started"
-        }
-        responses = {e["id"]: e["response"] for e in events if e["event"] == "response"}
-        assert len(events) == 192 and len(requests) == len(responses) == 96
-        assert len({r["id"] for r in responses.values()}) == 96
-        assert data["study"]["execution_commit"] == manifest["git_commit"]
-        assert data["study"]["system_prompt"] == manifest["config"]["system_prompt"]
-        assert data["study"]["design"] == manifest["design"]
-        assert data["study"]["schema"] == manifest["schema"]
-        table = list(csv.DictReader(io.StringIO(read(prefix + "summary.csv"))))
-        checks = 0
-        maximum = 0
-        paired = []
-        model_calls = 0
+def verify_labels(base, primary, seen_ids):
+    path = base / "label-diagnostic.json"
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text())
+    check(
+        data["version"] == "reliability-labels-v1"
+        and data["post_hoc"]
+        and data["primary_study_unchanged"],
+        "diagnostic scope mismatch",
+    )
+    swap = {"cash": "cash", "asset_a": "asset_b", "asset_b": "asset_a"}
 
-        def close(actual, expected):
-            nonlocal checks, maximum
-            error = abs(actual - expected)
-            maximum = max(maximum, error)
-            checks += 1
-            assert error <= 1e-9, (actual, expected)
-
-        k = 0.001
-
-        def net(value):
-            return (1 + value) * (1 - k) / (1 + k) - 1
-
-        assert [p["seed"] for p in data["paths"]] == manifest["design"]["seeds"]
-        for path in data["paths"]:
-            seed = path["seed"]
-            prices = path["market_prices"]
-            assert len(prices) == 21 and all(
-                len(row) == 2 and all(math.isfinite(v) and v > 0 for v in row)
-                for row in prices
-            )
-            assert set(path["runs"]) == {
-                "pnl",
-                "calibrated",
-                "cash",
-                "fixed_asset_a",
-                "public_signal",
-            }
-            regrets = {}
-            public = {}
-            for policy, run in path["runs"].items():
-                original = json.loads(read(prefix + f"{seed}-{policy}.json"))
-                records = original["records"]
-                episodes = run["episodes"]
-                assert len(episodes) == len(records) == 10
-                assert run["equity"] == original["equity"]
-                capital = 10000.0
-                phase_base = None
-                regret_sum = 0.0
-                for i, (e, r) in enumerate(zip(episodes, records)):
-                    for a, b in [
-                        ("weights", "executed_weights"),
-                        ("equity", "equity"),
-                        ("realized_return", "realized_return"),
-                        ("expected_return", "expected_return"),
-                        ("oracle_expected_return", "oracle_expected_return"),
-                        ("regret", "regret"),
-                        ("costs", "costs"),
-                        ("turnover", "turnover"),
-                        ("validation_failure", "validation_failure"),
-                        ("usage", "usage"),
-                    ]:
-                        assert e[a] == r[b]
-                    assert e["rationale"] == r["proposed"]["reasoning_summary"]
-                    assert (
-                        e["episode"],
-                        e["decision_time"],
-                        e["execution_time"],
-                        e["outcome_time"],
-                    ) == (i, 2 * i, 2 * i + 1, 2 * i + 2)
-                    selected = WEIGHTS.index(e["weights"])
-                    realized = 0.0
-                    costs = turnover = 0.0
-                    if selected:
-                        change = (
-                            prices[2 * i + 2][selected - 1]
-                            / prices[2 * i + 1][selected - 1]
-                            - 1
-                        )
-                        realized = net(change)
-                        bought = capital / (1 + k)
-                        sold = bought * (1 + change)
-                        costs = k * (bought + sold)
-                        turnover = (bought + sold) / capital
-                    capital *= 1 + realized
-                    means = [0.012, -0.012] if i < 5 else [-0.012, 0.012]
-                    values = [0] + [net(v) for v in means]
-                    regret = max(values) - values[selected]
-                    for actual, expected in [
-                        (e["realized_return"], realized),
-                        (e["equity"], capital),
-                        (e["costs"], costs),
-                        (e["turnover"], turnover),
-                        (e["expected_return"], values[selected]),
-                        (e["oracle_expected_return"], max(values)),
-                        (e["regret"], regret),
-                    ]:
-                        close(actual, expected)
-                    if i < 2:
-                        assert selected == ([1, 2] if seed % 2 == 0 else [2, 1])[i]
-                        assert (
-                            e["request_user"] is None
-                            and e["raw_reply"] is None
-                            and e["usage"]["calls"] == 0
-                        )
-                    elif policy in ["pnl", "calibrated"]:
-                        key = f"{seed}-{policy}-episode{i}"
-                        request = requests[key]
-                        response = responses[key]
-                        user = json.loads(request["messages"][1]["content"])
-                        assert (
-                            e["request_user"] == user
-                            and e["raw_reply"]
-                            == response["choices"][0]["message"]["content"]
-                            and e["response_id"] == response["id"]
-                        )
-                        assert (
-                            request["messages"][0]["content"]
-                            == data["study"]["system_prompt"]
-                        )
-                        assert (
-                            request["response_format"]["json_schema"]["schema"]
-                            == data["study"]["schema"]
-                        )
-                        assert (
-                            request["temperature"],
-                            request["seed"],
-                            request["max_tokens"],
-                        ) == (0, 42, 256)
-                        decoded = json.loads(e["raw_reply"])
-                        assert (
-                            list(decoded) == ["rationale", "choice"]
-                            and decoded["rationale"].strip()
-                        )
-                        assert (
-                            selected == IDS.index(decoded["choice"])
-                            and decoded["rationale"] == e["rationale"]
-                        )
-                        assert (
-                            e["validation_failure"] is None and e["usage"]["calls"] == 1
-                        )
-                        u = response["usage"]
-                        assert (
-                            u["total_tokens"]
-                            == u["prompt_tokens"] + u["completion_tokens"]
-                        )
-                        assert (
-                            e["usage"]["input_tokens"] == u["prompt_tokens"]
-                            and e["usage"]["output_tokens"] == u["completion_tokens"]
-                        )
-                        assert (
-                            response["choices"][0]["finish_reason"] == "stop"
-                            and response["model"] == manifest["config"]["model"]
-                        )
-                        assert (
-                            user["task"] == "market_decision"
-                            and user["available_options"] == IDS
-                        )
-                        assert set(user) == {
-                            "task",
-                            "public_observation",
-                            "available_options",
-                            "latest_completed_feedback",
-                        }
-                        obs = user["public_observation"]
-                        assert (
-                            obs["time"] == 2 * i
-                            and obs["prices"] == prices[max(0, 2 * i - 20) : 2 * i + 1]
-                        )
-                        public.setdefault((seed, i), []).append(obs)
-                        previous = episodes[i - 1]
-                        past = (
-                            previous["realized_return"]
-                            if policy == "pnl"
-                            else previous["expected_return"]
-                        )
-                        feedback = dict(
-                            completed_episode=i - 1,
-                            outcome_time=2 * i,
-                            executed_option=IDS[WEIGHTS.index(previous["weights"])],
-                            feedback_type="realized_net_return"
-                            if policy == "pnl"
-                            else "expected_net_return",
-                            reported_return_micro=round(past * 1e6),
-                        )
-                        assert (
-                            user["latest_completed_feedback"] == feedback
-                            and e["feedback"] == feedback
-                        )
-                        close(e["feedback_source"]["raw_return"], past)
-                        assert r["predicted_return"] is None
-                        model_calls += 1
-                    else:
-                        assert e["usage"]["calls"] == 0
-                    if i == 1:
-                        phase_base = capital
-                    if i >= 2:
-                        regret_sum += regret
-                summary = next(
-                    row
-                    for row in table
-                    if int(row["seed"]) == seed and row["condition"] == policy
+    def renamed(v):
+        if isinstance(v, dict):
+            result = {}
+            for k, item in v.items():
+                key = (
+                    k.replace("asset_a", "__TEMP__")
+                    .replace("asset_b", "asset_a")
+                    .replace("__TEMP__", "asset_b")
                 )
-                close(float(summary["model_phase_ev_regret"]), regret_sum)
-                close(float(summary["model_phase_return"]), capital / phase_base - 1)
-                regrets[policy] = regret_sum
-            assert all(len(obs) == 2 and obs[0] == obs[1] for obs in public.values())
-            paired.append(regrets["calibrated"] - regrets["pnl"])
-        assert model_calls == 96
-        summary = json.loads(read(prefix + "summary.json"))
-        close(summary["mean_paired_difference"], sum(paired) / 6)
-        return dict(
-            status="passed",
-            paths=6,
-            model_choices=model_calls,
-            numeric_checks=checks,
-            max_absolute_error=maximum,
-            expected_better=sum(v < -1e-12 for v in paired),
-            expected_worse=sum(v > 1e-12 for v in paired),
-            ties=sum(abs(v) <= 1e-12 for v in paired),
+                result[key] = renamed(item)
+            return result
+        if isinstance(v, list):
+            return [renamed(x) for x in v]
+        if isinstance(v, str):
+            return swap.get(v, v)
+        return v
+
+    check(set(data["models"]) == set(primary), "diagnostic checkpoint mismatch")
+    summaries = {}
+    for model, entry in data["models"].items():
+        check(
+            len(entry["records"]) == 16 and entry["independent_paths"] == 4,
+            "diagnostic count mismatch",
         )
+        groups = {}
+        for r in entry["records"]:
+            check(
+                r["seed"] in range(62300, 62304)
+                and r["condition"] in ["public_only", "inverted"]
+                and r["variant"] in ["original", "renamed"],
+                "unexpected diagnostic case",
+            )
+            g = groups.setdefault((r["seed"], r["condition"]), {})
+            check(r["variant"] not in g, "duplicate diagnostic cell")
+            req, resp = r["request"], r["response"]
+            check(
+                req["model"] == resp["model"] == primary[model]["alias"],
+                "diagnostic model mismatch",
+            )
+            reference = primary[model]["records"][0]["request"]
+            check(
+                req["messages"][0] == reference["messages"][0]
+                and req["response_format"] == reference["response_format"],
+                "diagnostic prompt/schema changed",
+            )
+            check(
+                req["max_tokens"] == 32
+                and req["temperature"] == 0
+                and req["seed"] == 42,
+                "diagnostic decoding changed",
+            )
+            raw = resp["choices"][0]
+            check(raw["finish_reason"] == "stop", "diagnostic output incomplete")
+            answer = json.loads(raw["message"]["content"])
+            check(
+                list(answer) == ["choice"] and answer["choice"] in OPTIONS,
+                "diagnostic answer invalid",
+            )
+            check(r["choice"] == answer["choice"], "diagnostic choice mislabeled")
+            physical = (
+                swap[answer["choice"]]
+                if r["variant"] == "renamed"
+                else answer["choice"]
+            )
+            check(r["physical_choice"] == physical, "diagnostic physical mapping wrong")
+            values = r["expected_net_bp"]
+            close(r["regret_bp"], max(values) - values[OPTIONS.index(answer["choice"])])
+            check(resp["id"] not in seen_ids, "diagnostic raw response reused")
+            seen_ids.add(resp["id"])
+            g[r["variant"]] = r
+        check(
+            set(groups)
+            == {
+                (s, c) for s in range(62300, 62304) for c in ["public_only", "inverted"]
+            },
+            "diagnostic paired context missing",
+        )
+        for g in groups.values():
+            check(set(g) == {"original", "renamed"}, "diagnostic variant missing")
+            original = g["original"]
+            changed = g["renamed"]
+            user = json.loads(changed["request"]["messages"][1]["content"])
+            inverse = json.dumps(renamed(user), separators=(",", ":"))
+            check(
+                inverse == original["request"]["messages"][1]["content"],
+                "renaming did not preserve the physical input and order",
+            )
+            v = original["expected_net_bp"]
+            check(
+                changed["expected_net_bp"] == [v[0], v[2], v[1]],
+                "diagnostic scoring reference not permuted",
+            )
+        summary = {}
+        for condition in ["public_only", "inverted"]:
+            rows = [groups[s, condition] for s in range(62300, 62304)]
+            expected = dict(
+                paired_contexts=4,
+                physical_action_agreement=sum(
+                    g["original"]["physical_choice"] == g["renamed"]["physical_choice"]
+                    for g in rows
+                ),
+                original_choices={
+                    o: sum(g["original"]["choice"] == o for g in rows) for o in OPTIONS
+                },
+                renamed_choices={
+                    o: sum(g["renamed"]["choice"] == o for g in rows) for o in OPTIONS
+                },
+            )
+            check(entry["summaries"][condition] == expected, "diagnostic summary wrong")
+            summary[condition] = expected["physical_action_agreement"]
+        summaries[model] = summary
+    return dict(
+        status="passed",
+        post_hoc=True,
+        independent_paths=4,
+        requests=32,
+        physical_action_agreement_out_of_four=summaries,
+    )
+
+
+def verify(base):
+    base = Path(base)
+    inventory = base / "SHA256SUMS"
+    if inventory.exists():
+        for line in inventory.read_text().splitlines():
+            expected, name = line.split("  ", 1)
+            p = (base / name).resolve()
+            check(p.is_relative_to(base.resolve()), "checksum path escaped release")
+            check(
+                hashlib.sha256(p.read_bytes()).hexdigest() == expected,
+                "release checksum mismatch: " + name,
+            )
+    data = json.loads((base / "replay.json").read_text())
+    expected = hashlib.sha256(canonical(data["models"]).encode()).hexdigest()
+    check(data["data_sha256"] == expected, "replay inventory checksum mismatch")
+    check(data["study"] == "reliability-v2" and data["paths"] == 48, "wrong study")
+    rng = random.Random(191119)
+    indices = [[rng.randrange(48) for _ in range(48)] for _ in range(20000)]
+    prompt = None
+    response_ids = set()
+    comparisons = 0
+    validation_count = 0
+    paired_truth = {}
+    for model, entry in data["models"].items():
+        groups = {}
+        validation = entry["validation_records"]
+        check(len(validation) == 22, "missing control/development records")
+        control_count, development_pairs = 0, set()
+        for record in validation:
+            req, resp = record["request"], record["response"]
+            check(
+                req["model"] == resp["model"] == entry["alias"],
+                "validation checkpoint mismatch",
+            )
+            check(
+                resp["choices"][0]["finish_reason"] == "stop",
+                "validation response incomplete",
+            )
+            decoded = json.loads(resp["choices"][0]["message"]["content"])
+            check(
+                list(decoded) == ["choice"] and decoded["choice"] in OPTIONS,
+                "invalid validation answer",
+            )
+            check(resp["id"] not in response_ids, "duplicate validation reply")
+            response_ids.add(resp["id"])
+            u = json.loads(req["messages"][1]["content"])
+            if record["stage"] == "controls":
+                expected_choice = max(u["options"], key=lambda r: r["net_value"])[
+                    "option_id"
+                ]
+                check(
+                    decoded["choice"] == expected_choice == record["expected_choice"],
+                    "numeric control failed",
+                )
+                control_count += 1
+            else:
+                check(
+                    record["stage"] == "development"
+                    and 61100 <= record["seed"] < 61104,
+                    "development seed mismatch",
+                )
+                pair = (record["seed"], record["condition"])
+                check(pair not in development_pairs, "duplicate development cell")
+                development_pairs.add(pair)
+        check(
+            control_count == 6 and len(development_pairs) == 16,
+            "incomplete validation battery",
+        )
+        check(
+            development_pairs
+            == {(s, c) for s in range(61100, 61104) for c in CONDITIONS},
+            "development cell omitted",
+        )
+        validation_count += len(validation)
+        check(len(entry["records"]) == 192, "missing evaluation cells")
+        for r in entry["records"]:
+            seed, condition = r["seed"], r["condition"]
+            check(condition in CONDITIONS and 62100 <= seed < 62148, "wrong cell")
+            g = groups.setdefault(seed, {})
+            check(condition not in g, "duplicate cell")
+            req, resp = r["request"], r["response"]
+            check(
+                req["model"] == resp["model"] == entry["alias"], "checkpoint mismatch"
+            )
+            check(
+                req["temperature"] == 0
+                and req["seed"] == 42
+                and req["max_tokens"] == 32,
+                "decoding mismatch",
+            )
+            check(
+                [m["role"] for m in req["messages"]] == ["system", "user"],
+                "unexpected messages",
+            )
+            if prompt is None:
+                prompt = req["messages"][0]["content"]
+            check(req["messages"][0]["content"] == prompt, "wording changed")
+            u = json.loads(req["messages"][1]["content"])
+            keys = {
+                "task",
+                "current_episode",
+                "public_signal_bp",
+                "available_options",
+                "current_decision_time",
+            }
+            if condition != "public_only":
+                keys |= {"completed_calibration", "current_source_forecast_bp"}
+            check(set(u) == keys, "unexpected evaluator/label field in input")
+            check(
+                u["task"] == "source_calibration_decision"
+                and u["current_episode"] == 8
+                and u["current_decision_time"] == 16,
+                "task/time mismatch",
+            )
+            check(u["available_options"] == list(OPTIONS), "action menu mismatch")
+            if condition != "public_only":
+                h = u["completed_calibration"]
+                check(
+                    [e["episode"] for e in h] == list(range(8)),
+                    "calibration chronology mismatch",
+                )
+                check(
+                    all(e["forecast_time"] < e["settlement_time"] < 16 for e in h),
+                    "future information leaked",
+                )
+            choice = resp["choices"][0]
+            check(choice["finish_reason"] == "stop", "incomplete raw response")
+            decoded = json.loads(choice["message"]["content"])
+            check(
+                list(decoded) == ["choice"] and decoded["choice"] in OPTIONS,
+                "invalid answer",
+            )
+            check(resp["id"] not in response_ids, "repeated response")
+            response_ids.add(resp["id"])
+            usage = resp["usage"]
+            check(
+                usage["total_tokens"]
+                == usage["prompt_tokens"] + usage["completion_tokens"],
+                "token accounting mismatch",
+            )
+            values = r["expected_net_bp"]
+            check(
+                len(values) == 3
+                and values[0] == 0
+                and all(math.isfinite(x) for x in values),
+                "invalid scoring reference",
+            )
+            if seed in paired_truth:
+                check(values == paired_truth[seed], "paired latent truth changed")
+            else:
+                paired_truth[seed] = values
+
+            def regret(c):
+                return max(values) - values[OPTIONS.index(c)]
+
+            score = regret(decoded["choice"])
+            close(score, r["regret_bp"])
+            b = rules(u)
+            check(
+                b == r["baseline_choices"], "baseline uses different information/rule"
+            )
+            for k, c in b.items():
+                close(regret(c), r["baseline_regret_bp"][k])
+                comparisons += 1
+            g[condition] = dict(
+                regret=score,
+                choice=decoded["choice"],
+                baseline=r["baseline_regret_bp"],
+                baseline_choices=b,
+                optimal=score == 0,
+                user=u,
+            )
+            comparisons += 1
+        check(set(groups) == set(range(62100, 62148)), "missing paths")
+        summary = data["analysis"]["models"][model]
+        for seed, g in groups.items():
+            check(set(g) == set(CONDITIONS), "incomplete paired path")
+            check(
+                all(
+                    g[c]["user"]["public_signal_bp"]
+                    == g["public_only"]["user"]["public_signal_bp"]
+                    for c in CONDITIONS
+                ),
+                "public signal differs within pair",
+            )
+
+            def settled(c):
+                return [
+                    (h["asset_a_settled_bp"], h["asset_b_settled_bp"])
+                    for h in g[c]["user"]["completed_calibration"]
+                ]
+
+            check(
+                settled("reliable") == settled("noise") == settled("inverted"),
+                "calibration outcome pairing changed",
+            )
+        for c in CONDITIONS:
+            values = [groups[s][c]["regret"] for s in sorted(groups)]
+            close(sum(values) / 48, summary["cells"][c]["mean_regret_bp"])
+            comparisons += 1
+            cell = summary["cells"][c]
+            for key, published in cell["baseline_mean_regret_bp"].items():
+                close(
+                    sum(groups[s][c]["baseline"][key] for s in groups) / 48, published
+                )
+                comparisons += 1
+            choices = [groups[s][c]["choice"] for s in groups]
+            check(
+                cell["choices"] == {o: choices.count(o) for o in OPTIONS},
+                "choice frequency mismatch",
+            )
+            check(
+                cell["optimal_choices"] == sum(groups[s][c]["optimal"] for s in groups),
+                "optimal choice count mismatch",
+            )
+            for key, count in cell["agreement"].items():
+                check(
+                    count
+                    == sum(
+                        groups[s][c]["choice"] == groups[s][c]["baseline_choices"][key]
+                        for s in groups
+                    ),
+                    "baseline agreement mismatch",
+                )
+            if c == "public_only":
+                continue
+            for comparison in ["versus_own_public", "versus_calibrated_rule"]:
+                differences = [
+                    groups[s][c]["regret"]
+                    - (
+                        groups[s]["public_only"]["regret"]
+                        if comparison == "versus_own_public"
+                        else groups[s][c]["baseline"]["calibrated"]
+                    )
+                    for s in sorted(groups)
+                ]
+                published = summary["contrasts"][c][comparison]
+                close(sum(differences) / 48, published["mean_bp"])
+                check(len(published["path_values_bp"]) == 48, "missing path contrasts")
+                for a, b in zip(differences, published["path_values_bp"]):
+                    close(a, b)
+                draws = sorted(
+                    sum(differences[i] for i in sample) / 48 for sample in indices
+                )
+                for a, b in zip(
+                    [quantile(draws, 0.025), quantile(draws, 0.975)],
+                    published["ci95_bp"],
+                ):
+                    close(a, b)
+                check(
+                    published["better_paths"] == sum(v < 0 for v in differences),
+                    "incorrect path count",
+                )
+                check(
+                    published["tied_paths"] == sum(v == 0 for v in differences),
+                    "incorrect tie count",
+                )
+                check(
+                    published["worse_paths"] == sum(v > 0 for v in differences),
+                    "incorrect worse count",
+                )
+                comparisons += 51
+    prior = data["prior_interface_attempts"]
+    check(len(prior) == 7, "failed interface history omitted")
+    check(sum(r["stage"] == "controls" for r in prior) == 6, "prior controls omitted")
+    for r in prior:
+        response = r["response"]
+        check(response["id"] not in response_ids, "prior response reused")
+        response_ids.add(response["id"])
+        decoded = json.loads(response["choices"][0]["message"]["content"])
+        check(decoded["choice"] in OPTIONS, "prior choice invalid")
+        if r["stage"] == "development":
+            check(len(decoded["rationale"]) > 240, "original interface failure hidden")
+        else:
+            user = json.loads(r["request"]["messages"][1]["content"])
+            best = max(user["options"], key=lambda o: o["net_value"])["option_id"]
+            check(decoded["choice"] == best, "prior numeric control mislabeled")
+    excluded = data["excluded_candidates"]["phi35_mini"]
+    check(len(excluded["records"]) == 6, "excluded candidate controls omitted")
+    correct = 0
+    for record in excluded["records"]:
+        resp = record["response"]
+        check(resp["id"] not in response_ids, "excluded response reused")
+        response_ids.add(resp["id"])
+        check(
+            resp["choices"][0]["finish_reason"] == "stop", "excluded control incomplete"
+        )
+        decoded = json.loads(resp["choices"][0]["message"]["content"])
+        check(
+            list(decoded) == ["choice"] and decoded["choice"] in OPTIONS,
+            "excluded answer invalid",
+        )
+        u = json.loads(record["request"]["messages"][1]["content"])
+        expected = max(u["options"], key=lambda r: r["net_value"])["option_id"]
+        correct += decoded["choice"] == expected
+        if expected == "cash":
+            check(decoded["choice"] != "cash", "excluded cash failure hidden")
+    check(
+        correct == 4
+        and excluded["audit"]["correct_controls"] == 4
+        and not excluded["audit"]["gate_passed"],
+        "excluded model outcome mislabeled",
+    )
+    check(len(data["infrastructure_attempts"]) == 2, "adapter history omitted")
+    failed_without_response = 0
+    for infrastructure in data["infrastructure_attempts"]:
+        e = infrastructure["terminal_event"]
+        if e["event"] == "failure":
+            check(
+                infrastructure["reported_token_usage"] is None,
+                "failed-request usage invented",
+            )
+            failed_without_response += 1
+        else:
+            resp = e["response"]
+            check(resp["id"] not in response_ids, "adapter response reused")
+            response_ids.add(resp["id"])
+            check(
+                resp["choices"][0]["finish_reason"] == "length",
+                "invalid adapter response hidden",
+            )
+    check(failed_without_response == 1, "missing pre-generation rejection")
+    check(
+        data["analysis"]["all_attempts_including_prior_version"]
+        == len(response_ids) + failed_without_response,
+        "complete attempt accounting mismatch",
+    )
+    check(
+        set(paired_truth) == set(range(62100, 62148)),
+        "cross-model path pairing mismatch",
+    )
+    label_receipt = verify_labels(base, data["models"], set(response_ids))
+    print(
+        json.dumps(
+            dict(
+                label_diagnostic=label_receipt,
+                status="passed",
+                models=list(data["models"]),
+                paths=48,
+                raw_evaluation_responses=sum(
+                    len(m["records"]) for m in data["models"].values()
+                ),
+                validation_responses=validation_count,
+                prior_interface_attempts=len(prior),
+                total_recorded_responses=len(response_ids),
+                adapter_attempts=len(data["infrastructure_attempts"]),
+                numeric_comparisons=comparisons,
+                inference_requests=0,
+            )
+        )
+    )
 
 
 if __name__ == "__main__":
-    print(json.dumps(verify(), indent=2))
+    verify(Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent)

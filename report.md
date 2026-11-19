@@ -1,79 +1,71 @@
-# Selected-action feedback: six-path development pilot
+# Can local language models assess feedback reliability?
 
-The expected-feedback arm had lower cumulative EV regret on **2/6** paths, higher regret on **1/6**, and tied on **3/6**. The mean paired difference (expected minus realized feedback) was **-0.004323** return units; negative favors expected feedback. This is the predeclared primary descriptive endpoint, not a profitability or general outcome-bias finding.
+A preliminary, paired synthetic evaluation. All values below are mean expected-value regret in net basis points per decision; lower is better. These are not trading profits.
 
-## What was compared
+48 independent paths per checkpoint; eight settled calibration episodes then one fresh decision per path; four paired conditions. Confidence intervals are descriptive paired-path bootstrap intervals, not multiplicity-adjusted significance tests.
 
-Two independently initialized copies of the same pinned local Qwen3-4B-Instruct-2507 (Unsloth Q4_K_M) policy saw identical public market observations and execution rules on each path. Both received only their latest executed option ID and one past-return scalar. P&L feedback gave its realized net return; expected feedback gave the simulator expected net return for that SAME chosen action. Neither arm received unchosen expected values or current hidden means. Expected feedback is privileged past simulator information, not a generally available real-market label.
+| Checkpoint | Public only | Reliable source | Noise source | Inverted source |
+| --- | ---: | ---: | ---: | ---: |
+| qwen3_4b | 41.42 | 43.74 | 70.49 | 82.85 |
+| qwen25_7b | 35.73 | 24.11 | 96.34 | 146.88 |
 
-Each arm and coded baseline began with the same two assigned trades, A/B on even seeds and B/A on odd seeds. Feedback was still delivered, but only the latest episode entered the first model call. All later actions were model/policy choices. Agents were rebuilt per arm/path, with no conversation history, memory retrieval, weight training, persistent belief state or extra forced exploration. After policies diverge, chosen feedback differs as a consequence; comparisons are at the path/policy level, not paired causal effects for individual trades.
+## Reviewed conclusion
 
-## Prospective workflow and gates
+In this fixed direct-choice setup, **noisy and inverted source packages worsened mean decision quality in both checkpoints**. Reliable-source contrasts were uncertain: Qwen3 +2.32 bp (descriptive 95% interval -18.01 to +23.70), Qwen2.5 -11.62 bp (-33.75 to +11.71), relative to each model's public-only choices. Neither reliable-source interval establishes the planned 25-bp improvement scale. No equivalence or multiplicity-adjusted significance claim is made.
 
-The [protocol](NATIVE_FEEDBACK_PILOT_PROTOCOL.md), endpoints, seeds and request caps were committed before inference. The market task explicitly changes the validated diagnostic schema to rationale-first + choice only: there is no copied hidden value or prediction field. Its shared prompt distinguishes known-values controls from uncertain market decisions. Six fresh transfer controls passed 6/6. A separate one-path smoke check (seed 1701, eight episodes) returned 12/12 valid replies and passed its input/accounting audit; both arms tied on regret. That smoke path was not pooled into this main batch and did not prompt policy changes.
+The stronger result is a failure of robustness, not a demonstrated internal trust mechanism. Qwen3 chose asset B on **47/48 inverted-source questions** (and cash on 0/48), compared with asset B on 25/48 public-only questions. It also never chose cash in either other source condition. Raw/scored choices match; all prompts fit the 4,096-token context (maximum 775). This behavior was not hidden behind aggregate means.
 
-The unchanged main batch used six predeclared development seeds, ten episodes each, two initial assignments and eight model choices per arm: 96 model requests. Market mean .012, sigma .04, signal noise .02, correlation .3, abrupt regime; initial cash 10000; fees 5 bps plus slippage 5 bps on each side. The regime schedule and generator parameters were not sent to the model. Only public past prices, time, noisy signals and the latest completed feedback were supplied.
+A separately frozen, fresh post-hoc diagnostic found **both checkpoints changed their physical decision on 2/4 inverted-source paths when arbitrary asset names were exchanged**, while remaining physically consistent on all 4/4 public-only paths. The numerical information and its sequence were preserved. With only four independent diagnostic paths, this exposes examples of naming/presentation sensitivity; it does not establish its population rate or isolate names, output-schema order, or internal reasoning. The original 48-path primary results are unchanged and this follow-up is not pooled with them.
 
-Public return signals and feedback were displayed in integer microreturn units, round(x*1e6), with <=0.5-unit quantization error and full precision preserved for audit/scoring. This is an explicit approximation for market data, not a claim that arbitrary returns lie exactly on the prior control grid. Both treatments used the same rule. Cash remains zero; no copied value becomes a forecast.
+![All 48 paired path contrasts per source and checkpoint](assets/reliability-v2-contrasts.png)
 
-## Primary and secondary path results
+## Source package minus the same model without it
 
-| Path | P&L EV regret | Expected EV regret | Expected − P&L | P&L phase return | Expected phase return | Different actions / 8 |
-|---|---:|---:|---:|---:|---:|---:|
-| 1802 | 0.047904 | 0.047904 | +0.000000 | -1.02% | -1.02% | 0 |
-| 1803 | 0.000000 | 0.000000 | +0.000000 | 45.79% | 45.79% | 0 |
-| 1804 | 0.019956 | 0.000000 | -0.019956 | -0.51% | 2.20% | 2 |
-| 1805 | 0.033930 | 0.023952 | -0.009978 | 7.04% | 11.44% | 1 |
-| 1806 | 0.009978 | 0.009978 | +0.000000 | 23.84% | 28.83% | 2 |
-| 1807 | 0.053886 | 0.057882 | +0.003996 | -5.18% | -9.32% | 2 |
+Negative differences favor supplying the source and its calibration history. Each interval resamples whole paired paths.
 
-EV regret is summed expected-return loss relative to the feasible cash/single-asset oracle on each model-choice episode; it is not compounded portfolio return or a dollar loss. Realized phase return compounds only after the two assigned episodes, relative to equity at that point. Floating-point differences <=1e-12 count as descriptive ties. Hidden truth is used by the evaluator only.
+| Checkpoint | Source | Difference (bp) | Descriptive 95% interval | Better / tied / worse paths |
+| --- | --- | ---: | --- | --- |
+| qwen3_4b | reliable | +2.32 | [-18.01, +23.70] | 5 / 38 / 5 |
+| qwen3_4b | noise | +29.07 | [+6.96, +53.22] | 4 / 32 / 12 |
+| qwen3_4b | inverted | +41.43 | [+10.37, +74.34] | 6 / 26 / 16 |
+| qwen25_7b | reliable | -11.62 | [-33.75, +11.71] | 13 / 29 / 6 |
+| qwen25_7b | noise | +60.61 | [+28.07, +96.33] | 4 / 21 / 23 |
+| qwen25_7b | inverted | +111.15 | [+73.60, +150.76] | 4 / 11 / 33 |
 
-Path 1806 illustrates the distinction: both arms had equal EV regret, although realized phase returns differed. It is a quality tie under the predeclared endpoint. The large percentage gains on path 1803 are synthetic outcomes over eight toy episodes with deliberately high return/noise settings; they are not annualized or calibrated real-market backtest returns.
+## Statistical comparison
 
-## Behavior and coded baselines
+| Checkpoint | Source | LLM regret | Calibrated rule regret | Difference (bp) | Descriptive 95% interval |
+| --- | --- | ---: | ---: | ---: | --- |
+| qwen3_4b | reliable | 43.74 | 7.57 | +36.17 | [+15.26, +59.91] |
+| qwen3_4b | noise | 70.49 | 27.64 | +42.85 | [+16.60, +70.79] |
+| qwen3_4b | inverted | 82.85 | 16.08 | +66.77 | [+36.53, +98.52] |
+| qwen25_7b | reliable | 24.11 | 7.57 | +16.55 | [+2.02, +35.01] |
+| qwen25_7b | noise | 96.34 | 27.64 | +68.70 | [+35.52, +105.19] |
+| qwen25_7b | inverted | 146.88 | 16.08 | +130.79 | [+94.78, +167.87] |
 
-| Policy | Mean EV regret | Mean phase return | Cash / 48 | Asset A / 48 | Asset B / 48 |
-|---|---:|---:|---:|---:|---:|
-| pnl | 0.027609 | 11.66% | 7 | 16 | 25 |
-| calibrated | 0.023286 | 12.99% | 2 | 17 | 29 |
-| cash | 0.079824 | 0.00% | 48 | 0 | 0 |
-| fixed_asset_a | 0.119760 | -1.30% | 0 | 48 | 0 |
-| public_signal | 0.031601 | 7.91% | 7 | 16 | 25 |
+## Integrity and interpretation
 
-Identical action sequences between feedback arms occurred on 2/6 paths. Choices matching the coded public-signal policy: P&L 34/48, expected feedback 39/48. These are descriptive behavioral matches, not proof of what the model internally attended to or whether its explanations are faithful.
+428 logged local requests in the successful v2 controls, development and evaluation. An additional 7 prior-interface attempts and 2 adapter failures and six excluded-candidate controls are retained separately (443 total attempts). All included-checkpoint gates and independent raw-response audits passed. No paid model calls; host compute and storage excluded. Full accounting and per-path values are in the accompanying JSON.
 
-Cash, fixed-A and signal-greedy controls used the same assigned exploration. The signal policy maximizes cost-adjusted estimated net return from the same rounded PUBLIC signals; it never reads latent means. Coded policies make zero model calls. No return-based seed selection, clipping, output repair or favorable-action forcing was used.
+The simple calibrated rule estimates a signed relationship from the same noisy settled outcomes shown to the models. It never receives the source label or latent scoring truth. It is a specialized fixed estimator: its 100-bp residual standard-deviation floor matches the simulator settlement-noise scale, which is not stated in the model prompt. Thus it shares the observed records but has different structural assumptions; a gap against it alone does not establish superiority under identical total prior knowledge. This affects the secondary benchmark interpretation, not the primary within-model paired source contrasts. Agreement with that rule is behavioral evidence, not proof of an internal reasoning process.
 
-## Integrity, usage and limits
+The source-versus-public comparison adds both current forecasts and their calibration history. It cannot isolate the causal benefit of history, wording length or attention. Inverted advice is a stationary negative relationship that can be corrected, not a malicious adaptive adversary. Reliable and inverted forecasts have equal information content for an observer that knows the sign; only the noise condition removes predictive information. Current source numbers differ across arms; identical-current-advice history ablations would require a separate protocol.
 
-All 96/96 main responses were received, with 0 invalid responses/fallbacks. The independent audit verified identical public observations, assignments, pre-request feedback timing, selected-only content, provider identity/usage, raw choices versus executed weights, every reported endpoint and paired difference. It recalculated fees/slippage, turnover, equity and EV/regret independently of the portfolio return helper. 2965 numeric comparisons passed; max difference 1.64e-11, tolerance 1e-09. Source digests and earlier artifact hashes matched.
+Phi-3.5-mini, the different-family candidate, produced valid JSON but failed the frozen numeric gate (4/6; both cash-winning cases wrong) and was excluded without development or evaluation. Consequently, the completed comparison remains two Qwen-family checkpoints. Only fixed quantized checkpoints, a single prompt and a stationary Gaussian testbed were examined. The 48 paths improve coverage over the previous 24-path study but do not guarantee precision. No general financial forecasting, model-family superiority, learning, or publication-novelty claim follows.
 
-The regression suite passed 107 tests, including selected-only feedback isolation, causal diagnostic snapshots, common exploration, baseline accounting, and preservation of attempted calls when provider usage is unavailable. Touched Python files passed lint.
+The earlier factorial study separated source information from wording. This study fixes wording across source arms and replaces privileged past expected-return feedback with noisy settled calibration outcomes. It evaluates source-use robustness rather than establishing outcome bias or introducing a new agent algorithm.
 
-The auditor detected all four deliberate corruptions in copies of smoke artifacts: altered equity, wrong feedback value, injected hidden expected values and a missing response. Originals remained unchanged. Full raw inputs/responses and full-precision source diagnostics were retained, including rationales and assigned actions.
+## Separate post-hoc label diagnostic
 
-Main provider-reported usage: 84,485 input / 14,196 output tokens. Model API fees $0; cloud compute/storage costs are excluded. Local CPU inference is serialized; virtual bars do not wait on real-time prices, so this is not a deployment latency/deadline test. Config: b12242, four CPU threads, context 4096, one slot, temperature 0, seed 42, output cap 256, timeout 120s, no retries.
+Protocol: FEEDBACK_LABEL_DIAGNOSTIC_PROTOCOL.md. New seeds 62300-62303; public-only/inverted conditions x original/renamed inputs x two checkpoints. All 32 responses were structurally valid. No prompt retuning or original-question replay occurred. Literal names and associated input keys/menu identifiers were swapped while the same physical numbers and their sequence were retained; choices were mapped back to physical assets.
 
-The shared market prompt does not explicitly fix a risk-utility function beyond the paper-trading task. EV regret is an external risk-neutral reference score; conservative cash choices should not be labeled universally irrational. A larger study should state the decision objective and risk preference explicitly. 
+| Checkpoint | Condition | Same physical choice / 4 | Original asset B / 4 | Renamed asset B / 4 |
+| --- | --- | ---: | ---: | ---: |
+| qwen25_7b | inverted | 2 | 2 | 1 |
+| qwen25_7b | public_only | 4 | 1 | 3 |
+| qwen3_4b | inverted | 2 | 3 | 3 |
+| qwen3_4b | public_only | 4 | 1 | 3 |
 
-Across all gates there were 114 unique received responses: 6 controls, 12 smoke and 96 main. The final physical model/runtime checksum and server context/identity check passed, and credential scans found no key in the raw artifacts.
+The main study accounts for 443 attempted requests. The separate post-hoc diagnostic adds 32, for **475 combined attempts**, including 474 recorded model responses and one request failure without reported token usage. A prior long-rationale response and a truncated Phi adapter response remain invalid and are not repaired or pooled into primary performance. The different-family Phi candidate was excluded after 4/6 certain-value controls; this concerns the tested checkpoint/runtime/prompt combination, not all Phi models.
 
-| Main request latency | P&L | Expected |
-|---|---:|---:|
-| Mean seconds | 17.79 | 17.71 |
-| Summed seconds | 854.06 | 850.00 |
-
-Request times exclude rate-limiter waits and are not total setup/study wall time. They are descriptive CPU resource measurements, not a latency-matched efficacy result.
-
-The return-type label and numeric feedback value both change between arms; this pilot does not isolate numerical noise reduction from label interpretation. There are only six independent paths, one deterministic model run per arm and one short synthetic regime family. Decisions and permutations are dependent. No p-values, confidence intervals, power claim or evidence of equivalence is reported. This chosen-action expected-value treatment is privileged simulator feedback and may not transfer to noisy real feedback. Latest-only context restricts adaptation; a cash choice can subsequently yield only zero feedback. Shared past prices permit both arms to infer historical realized outcomes. The prior interface checks do not guarantee optimal uncertain-market decisions. No reserved evaluation paths or real trades were used.
-
-## Next step
-
-Keep this frozen pilot and its negative/null outcomes intact. Before a larger study, use the observed action patterns and coded baselines to decide whether a prospective feedback-response probe or a better policy/task formulation is needed. Any changed prompt, context policy, model or exploration schedule needs a separate development version and fresh validation. Only then perform prospective power analysis and freeze a disjoint evaluation study. This batch alone cannot establish that better feedback generally helps or does not help AI decisions.
-
-## Reproduction and evidence
-
-Runner: `research/experiments/outcome_bias/native_pilot.py`; agent: `research/agents/native_feedback.py`; independent auditor: `research/evaluation/native_feedback_audit.py`. CLI defaults to a no-inference plan. Stage order is controls → audited smoke → main; populated directories cannot be automatically resumed or overwritten. Commit source before live collection.
-
-Raw stages are `research/results/native_feedback_v1_controls/`, `native_feedback_v1_smoke/` and `native_feedback_v1_main/`. They are ignored by Git. The review archive contains all stages, plots, audit/probe scripts and implementation, excluding weights/keys. Report and compact structured audit are committed. Fresh-task restoration of cached weights/raw results has not been independently verified.
+Expected-value regret uses a perfect-information simulator reference. Positive regret can occur for a rational decision maker with noisy observations, so it does not itself prove irrationality. The forecasts here are simulator-generated noisy measurements, not predictions from a trained financial model. The primary intervention changes both current forecasts and calibration history, and the numerical benchmark has specialized structural assumptions. The evidence supports a controlled evaluation artifact and examples of pipeline fragility, not profitable trading, a new learning algorithm, or a verified literature-first finding. See the separate prior-work comparison for the bounded literature review.

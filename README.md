@@ -1,13 +1,16 @@
-# Feedback Lab: recorded evaluation demo
+# Feedback Lab: recorded local-model evaluation
 
-**[Open the interactive demo](https://aryan-gupta123.github.io/feedback-lab-demo/)** · [Read the failure case study](https://aryan-gupta123.github.io/feedback-lab-demo/case-study.html)
+[Open the demo](https://aryan-gupta123.github.io/feedback-lab-demo/).
 
-This repository contains only the public browser demo and recorded research data. The implementation repository remains private.
+The current page covers the frozen feedback-reliability study: 48 independent synthetic paths per eligible checkpoint, reliable/unrelated/inverted sources, public-only comparisons and same-information statistical baselines. It is a replay of recorded inference, not live trading. Prior failed interfaces and negative results are retained in the study log.
 
-Open index.html locally. No model, API key, package installation or internet access is needed. Select all six paths, including the higher-regret path and ties. case-study.html documents a real failed control and its narrower pipeline fix.
+Download this repository, then run `python3 verify.py .` to independently rescore raw evaluation replies, check chronology/pairing and recompute statistical baselines and confidence intervals. Python standard library only; no network or model required. It verifies the arithmetic of recorded evidence, not a signed attestation from the model publisher. The research implementation remains private.
 
-To verify the saved evidence: python verify.py (Python 3.11+, no third-party packages; do not use -O). The verifier checks 96 main model choices, 2,257 arithmetic comparisons, and 48 numeric-interface controls. Model API fees were zero; host costs are excluded. Data-only evidence excludes the original bundle's private implementation/review scripts. PUBLICATION.json lists published members, and SHA256SUMS records integrity digests.
+`pilot.html` preserves the earlier six-path pilot. Its data and interface case study are historical and are not pooled into the current study. `verify_pilot.py` is the original historical verifier; the old checksum inventory is preserved separately as `PILOT_SHA256SUMS` because the public homepage and report have changed. The original verifier checks the current release checksums before checking the preserved pilot arithmetic; run `python3 verify_pilot.py` for those historical checks.
 
-To host for free, upload these files and the evidence folder to a public demo-only repository, then choose Settings → Pages → Deploy from a branch → main → /(root). Do not make the implementation repository public or upload its history. Wait for GitHub's Pages build before sharing the URL.
+See `protocol.md`, `run-log.md`, `report.md`, and `replay.json` for exact scope, pre-evaluation revisions and the complete evaluation evidence. API fees were $0; host compute and storage costs are excluded. This project claims a focused evaluation artifact, not a novel trading algorithm or an investment strategy.
 
-Results are exploratory: expected-return feedback lowered regret on two of six paths, raised it on one, and tied on three. No profitability, significance, broad reasoning improvement or novelty claim is made.
+
+The reliable-source effects were uncertain; noisy and inverted sources increased mean expected-value regret in both tested checkpoints. Qwen3's asset-B concentration is shown openly in the action-count table. A separate post-hoc four-path / 32-response asset-renaming diagnostic found naming/presentation sensitivity; its raw evidence is label-diagnostic.json and it is not pooled into the primary 48 paths. The main study has 443 attempts; the two phases combined have 475 (including retained failures). The different-family Phi candidate failed 4/6 numeric controls and is excluded, so completed performance comparisons remain two Qwen checkpoints.
+
+The forecasts are simulated measurements, not predictions from a trained financial model. The numerical benchmark has specialized prior assumptions, and the source intervention includes both current forecasts and their calibration history. See report.md and positioning.md for the boundaries of the claims.
