@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="description" content="A failed chronology control, a reproducible 48-path evaluation, and a separate diagnostic of presentation sensitivity in local language models.">
+<meta property="og:title" content="Valid JSON. Unreliable decisions. — Feedback Lab">
+<meta property="og:description" content="What failed, what was fixed, and what the recorded evidence supports. A technical case study with offline verification.">
+<meta name="author" content="Aryan Gupta">
+<title>Valid JSON. Unreliable decisions. · Feedback Lab</title>
+<link rel="stylesheet" href="assets/research-note.css">
+</head><body>
+<header class="top"><a class="brand" href="index.html">FEEDBACK LAB</a><nav aria-label="Research links"><a href="index.html#inspect">Explore the evidence</a><a href="research-note.pdf" download>Download PDF</a><a href="#verify-the-recorded-evidence">Verify offline</a></nav></header>
+<main><h1 id="valid-json-unreliable-decisions">Valid JSON. Unreliable
+decisions.</h1>
+<p><strong>Auditing feedback reliability in local language
+models</strong><br />
+Aryan Gupta · Technical case study · November 20, 2026 · Not peer
+reviewed</p>
+<p>A model can return the right output format while solving the wrong
+task. In an early control for this project, a local language model
+correctly identified the best option in the latest episode, then ignored
+that boundary and selected a larger payoff from an older episode. The
+JSON was valid. The decision was wrong.</p>
+<p>That failure changed the project: validate the decision interface
+before interpreting feedback effects, retain failed attempts, and make
+the evidence independently inspectable. The resulting study tested two
+fixed local checkpoints across 48 paired synthetic paths. Noisy and
+inverted sources increased mean expected-value regret; reliable-source
+benefits remained uncertain. A small follow-up also exposed sensitivity
+to arbitrary asset naming/presentation.</p>
+<p><strong>Start here:</strong> <a href="index.html#inspect">inspect the
+recorded decisions</a>, <a href="report.md">read the full results</a>,
+or <a href="research-note.pdf">download this note as a PDF</a>.</p>
+<h2 id="what-was-tested">What was tested</h2>
+<p>The question was whether fixed, quantized, off-the-shelf local
+instruction models could use a source's numerical calibration history
+when choosing between cash and two synthetic assets. Trading provides a
+controlled setting with known scoring truth; this is not a real-market
+forecasting or profitability test.</p>
+<p>Each primary path contains eight settled calibration episodes and one
+fresh decision. The same fresh decision is evaluated under four
+conditions: public information only, a reliable source, an unrelated
+noise source, or an inverted source. The source arms share wording and
+structure. The intervention adds <strong>both current forecasts and
+their calibration history</strong>, so it cannot isolate the effect of
+history alone.</p>
+<p>Qwen3-4B and Qwen2.5-7B completed the evaluation: 48 paths × 4
+conditions × 2 checkpoints = <strong>384 recorded evaluation
+responses</strong>. The paths are shared across conditions and
+checkpoints; there are 48 independent synthetic paths, not 384
+independent experiments. Phi-3.5-mini was considered but failed the
+numerical eligibility gate, answering 4 of 6 controls correctly, and was
+excluded before development or evaluation. Completed performance
+comparisons therefore remain within the Qwen family.</p>
+<p>The endpoint is <strong>expected-value regret</strong>: the best
+available net expected return minus the expected return of the selected
+action. Lower is better. Units are basis points (bp; 100 bp is one
+percentage point). Expected values are simulator scoring truth, not
+observed trading profits.</p>
+<h2 id="the-control-that-stopped-an-earlier-interface">The control that
+stopped an earlier interface</h2>
+<p>The earlier chronology task asked for the best choice in the newest
+completed episode. Episode 9 offered cash = 0, asset A = −16,000, and
+asset B = −59,000 in integer microreturn units. The correct answer was
+cash. An older episode 4 offered asset A = +97,000.</p>
+<p>The recorded answer selected asset A and +97,000. Its rationale
+explicitly compared values across episodes. This was not a formatting
+failure: the model produced valid JSON and an allowed choice, but
+violated the required episode boundary. The raw-history transfer battery
+passed only <strong>4/6</strong> cases and was stopped.</p>
+<p>The correction moved chronology into an input invariant: validate
+unique, nonnegative episode numbers and select the newest record before
+asking the model to choose an action. The preprocessor did not rank
+payoffs or choose an asset.</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Select time, not the most attractive historical payoff.</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>latest <span class="op">=</span> <span class="bu">max</span>(completed_episodes, key<span class="op">=</span><span class="kw">lambda</span> record: record[<span class="st">&quot;episode&quot;</span>])</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>model_input <span class="op">=</span> {<span class="st">&quot;task&quot;</span>: <span class="st">&quot;past_feedback&quot;</span>, <span class="st">&quot;completed_episode&quot;</span>: latest}</span></code></pre></div>
+<p>The revised transfer battery passed <strong>6/6</strong>. A later
+content-hash review found one replay in the original confirmation
+battery; seed separation had not guaranteed unique inputs. The original
+observations were retained. A full additional, disjoint
+<strong>36-case</strong> confirmation battery was specified before
+inference and passed without changing the model, prompt, or scorer.</p>
+<p>These were different development batteries, not a randomized
+before/after comparison. They validate a narrower pipeline contract, not
+a general improvement in model reasoning. This historical interface
+evidence is separate from the later 48-path reliability study. <a
+href="case-study.html">Inspect the exact failure and validation
+batches</a>.</p>
+<h2 id="what-the-primary-study-found">What the primary study found</h2>
+<p>The table shows source-package regret <strong>minus the same model's
+public-only regret</strong>. Positive values mean worse decisions with
+the source package. Intervals are descriptive 95% paired-path bootstrap
+intervals using 20,000 resamples; they are not multiplicity-adjusted
+significance tests.</p>
+<!-- primary-contrasts:start -->
+
+<table>
+<thead>
+<tr class="header">
+<th>Checkpoint</th>
+<th>Source</th>
+<th style="text-align: right;">Difference (bp)</th>
+<th>Descriptive 95% interval</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Qwen3-4B</td>
+<td>Reliable</td>
+<td style="text-align: right;">+2.32</td>
+<td>[-18.01, +23.70]</td>
+</tr>
+<tr class="even">
+<td>Qwen3-4B</td>
+<td>Noise</td>
+<td style="text-align: right;">+29.07</td>
+<td>[+6.96, +53.22]</td>
+</tr>
+<tr class="odd">
+<td>Qwen3-4B</td>
+<td>Inverted</td>
+<td style="text-align: right;">+41.43</td>
+<td>[+10.37, +74.34]</td>
+</tr>
+<tr class="even">
+<td>Qwen2.5-7B</td>
+<td>Reliable</td>
+<td style="text-align: right;">-11.62</td>
+<td>[-33.75, +11.71]</td>
+</tr>
+<tr class="odd">
+<td>Qwen2.5-7B</td>
+<td>Noise</td>
+<td style="text-align: right;">+60.61</td>
+<td>[+28.07, +96.33]</td>
+</tr>
+<tr class="even">
+<td>Qwen2.5-7B</td>
+<td>Inverted</td>
+<td style="text-align: right;">+111.15</td>
+<td>[+73.60, +150.76]</td>
+</tr>
+</tbody>
+</table>
+<!-- primary-contrasts:end -->
+
+<p>Reliable-source intervals cross zero for both checkpoints. Neither
+establishes the planned 25-bp improvement scale. The noisy and inverted
+conditions increased mean regret in both tested checkpoints. This is
+evidence of a robustness failure in this setup, not evidence that
+informative feedback generally harms language models.</p>
+<p><img src="assets/reliability-v2-contrasts.png"
+alt="All 48 paired path contrasts for each source condition and checkpoint. Negative contrasts favor the source package; positive contrasts favor public-only decisions." /></p>
+<p>The simple numerical calibration rule had lower mean regret than the
+models in the source conditions. Its interpretation needs care: it sees
+the same observed records, but its fixed estimator has specialized
+structural assumptions, including a residual-noise floor matching a
+simulator noise scale not disclosed in the model prompt. It is not an
+equal-total-prior-knowledge comparison or proof of an optimal policy.
+The primary within-model contrasts above do not depend on that benchmark
+comparison.</p>
+<h2 id="why-the-action-counts-mattered">Why the action counts
+mattered</h2>
+<p>Qwen3 chose asset B on <strong>47/48 inverted-source paths</strong>,
+and cash on none. Raw and scored choices matched. The longest prompt was
+775 tokens within a 4,096-token context, so a mapping mismatch or
+context truncation did not explain the pattern in the audit.</p>
+<p>That concentration motivated a separately frozen, post-hoc diagnostic
+on <strong>four new paths</strong>. The diagnostic exchanged arbitrary
+asset identifiers throughout the numerical records, preserved the
+physical information and its sequence, and mapped decisions back to
+physical assets. Across two conditions, two naming versions, and two
+checkpoints, it required <strong>32 additional responses</strong>.</p>
+<p>Both checkpoints changed their physical choice on <strong>2/4
+inverted-source paths</strong> while preserving it on <strong>4/4
+public-only paths</strong>. This exposes examples of naming/presentation
+sensitivity. Four paths cannot establish its population rate,
+distinguish name preference from schema/order effects, or identify an
+internal reasoning mechanism. These responses are not pooled into the
+primary study. <a href="label-diagnostic-protocol.md">Read the frozen
+diagnostic protocol</a> and <a href="label-diagnostic.json">inspect
+every diagnostic request and reply</a>.</p>
+<h2 id="what-this-contributes">What this contributes</h2>
+<p>The contribution is a focused evaluation and engineering artifact: a
+decision interface with explicit eligibility gates, paired held-out
+paths, statistical comparisons, independent replay auditing, and
+preserved negative evidence. Inferring a signed relationship from
+examples, learning from noisy targets, and providing informative
+feedback already have substantial prior research. This project does not
+claim a new learning algorithm, a first discovery of feedback
+sensitivity, or a matched win over published systems. The <a
+href="positioning.md">literature-positioning note</a> describes the
+comparisons inspected and the gaps still open.</p>
+<p>The evidence supports a limited conclusion: under a single stationary
+Gaussian simulator and fixed direct-choice prompt, the two completed
+checkpoints did not reliably turn extra source information into better
+decisions, and the diagnostic found presentation-sensitive choices. It
+does not establish real-market performance, general model-family
+rankings, or that asset naming alone caused the primary regret
+effects.</p>
+<p>A stronger next experiment would hold current forecasts fixed while
+varying calibration history, and independently randomize asset
+identities and presentation/schema positions. It would need a new
+protocol, adequate independent paths and additional model families that
+pass the same eligibility gate. Those experiments have not been run
+here.</p>
+<h2 id="verify-the-recorded-evidence">Verify the recorded evidence</h2>
+<p>The public package includes the frozen protocol, full recorded
+primary requests/replies, diagnostic evidence, scoring data, and a
+Python standard-library verifier. The research implementation remains
+private. Public replay verification establishes arithmetic and
+consistency of the supplied records; it does not independently
+regenerate inference or attest that the checkpoint publisher produced
+the records.</p>
+<p>Download the <a
+href="https://github.com/aryan-gupta123/feedback-lab-demo/archive/refs/heads/main.zip">public
+repository archive</a>, extract it, and run:</p>
+<pre class="text"><code>python3 verify.py .</code></pre>
+<p>The historical interface case has its own <a
+href="evidence/interface.tar.gz">validation evidence archive</a>. The <a
+href="run-log.md">run log</a> preserves exclusions, adapter failures,
+and reporting corrections. The primary phase accounts for <strong>443
+attempts</strong>; the separate naming diagnostic adds 32, for
+<strong>475 combined attempts</strong>. These totals include controls,
+development and retained failures, not just the 384 primary evaluation
+responses. Earlier historical studies are separate.</p>
+<p>No new inference was performed to write this case study. The recorded
+study incurred $0 in model API fees; host compute and storage are
+excluded. This is an inspectable technical report and recorded demo, not
+a peer-reviewed paper or investment strategy.</p></main>
+<footer><p><span class="status">Recorded evidence · No live model calls</span><br>Independent technical case study. Research implementation private; public replay evidence and verifier available. <a href="index.html">Return to the interactive demo</a>.</p></footer>
+</body></html>
